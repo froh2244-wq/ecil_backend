@@ -1,0 +1,6 @@
+# Reuse the known CPU OCR stack without changing the CLI dependency file.
+-r requirements.txt
+
+fastapi==0.142.1
+uvicorn==0.54.0
+python-multipart==0.0.32

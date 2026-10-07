@@ -1,0 +1,226 @@
+웹 OCR 백엔드 사용 방법
+======================
+
+1. 확인 환경과 의존성
+--------------------
+현재 실행 도구에서 확인한 환경은 Python 3.12.14, Windows 11 x64
+(빌드 10.0.26200, AMD64)입니다. NVIDIA GeForce RTX 5060도 감지되지만,
+이 프로젝트의 기존 requirements.txt는 CPU PaddlePaddle을 고정하고 있어
+웹 백엔드도 그 CPU 구성을 사용합니다. GPU용 PaddlePaddle은 설치하거나
+검증하지 않았습니다.
+
+Python 버전은 실행 도구에 포함된 Python에서 확인했습니다. 이 도구의 PowerShell
+PATH에는 `python`과 `py` 명령 별칭이 없었습니다. 아래 명령을 실행할 때 Python이
+PATH에 없다면 Python 3.12 실행 파일의 전체 경로를 사용하세요.
+
+웹 전용 requirements-web.txt는 기존 requirements.txt를 포함해 OCR 패키지를
+같은 버전으로 맞추고, 웹 의존성을 별도로 추가합니다.
+
+- PaddlePaddle 3.2.0 (CPU)
+- PaddleOCR 3.7.0
+- PaddleX 3.7.0
+- FastAPI 0.142.1
+- Uvicorn 0.54.0
+- python-multipart 0.0.32 (multipart 업로드 파싱)
+
+PaddlePaddle 3.2.0에는 CPython 3.12 / Windows x86-64 CPU wheel이 있습니다.
+FastAPI 0.142.1, Uvicorn 0.54.0, python-multipart 0.0.32는 Python 3.12를
+포함하는 Python 버전 조건과 OS 독립 배포 정보를 제공하는 배포판을 기준으로
+선택했습니다. 실제 OCR 패키지가 현재 이 실행 도구에 설치되어 있지는 않으므로,
+모델 초기화와 추론은 여기서 실행 검증하지 못했습니다.
+
+OCR 구성은 PaddleOCR 3.x 일반 OCR 파이프라인입니다.
+
+- 검출: PP-OCRv6_medium_det
+- 인식: korean_PP-OCRv5_mobile_rec (한국어·영어·숫자)
+- 추론: paddle_static
+- 장치: CPU (프로젝트의 PaddlePaddle 패키지가 CPU용으로 고정됨)
+- 문서 회전 분류와 문서 왜곡 보정은 끄고, 텍스트 줄 방향 분류는 켭니다.
+
+PaddleOCR 3.7.0 공식 문서는 두 모델을 각각 일반 OCR 파이프라인의 검출·인식
+모델로 열거합니다. PaddleX 3.7 모델 목록에도 두 식별자가 포함되어 있어 이
+혼합 구성을 사용합니다. PP-OCRv6 기본 인식 모델은 한국어 인식기로 사용하지
+않습니다. 공식 PaddleOCR 3.7 문서에서 paddle_static을 일반적인 기본 엔진이자
+권장 첫 선택으로 설명하므로 백엔드에서 이를 명시했습니다.
+
+2. 설치 및 최초 모델 다운로드
+----------------------------
+프로젝트 폴더에서 Python 3.12 환경을 활성화한 뒤 별도 가상환경을 만듭니다.
+Windows Python Launcher가 없다면 `python`을 Python 3.12 실행 파일의 전체 경로로
+바꿔 실행하세요.
+
+    python -m venv .venv-web
+    .\.venv-web\Scripts\Activate.ps1
+    python -m pip install --upgrade pip
+    python -m pip install -r requirements-web.txt
+
+`requirements-web.txt`는 기존 CLI requirements.txt를 참조하지만 그 파일을
+수정하지 않습니다. CPU용 PaddlePaddle은 기존 requirements.txt에 설정된 공식
+CPU 패키지 인덱스에서 설치됩니다.
+
+첫 백엔드 시작 때 PaddleX가 검출·인식 모델 파일을 다운로드합니다. 최초 시작은
+네트워크 상태에 따라 시간이 걸릴 수 있으며, 다운로드 후에는 로컬 모델 캐시를
+재사용합니다. 이 API는 모델 다운로드나 초기화가 실패하면 기본 모델로 바꾸지
+않고 `/health`에 실패 상태를 표시합니다.
+
+3. 서버 실행
+------------
+PowerShell에서 실행합니다.
+
+    $env:WEB_OCR_HOST = "127.0.0.1"
+    $env:WEB_OCR_PORT = "8000"
+    python .\web_ocr_backend.py
+
+Uvicorn 모듈 명령으로 실행할 수도 있습니다.
+
+    python -m uvicorn web_ocr_backend:app --host 127.0.0.1 --port 8000
+
+서버 로그에서 모델 초기화 완료 문구를 확인하고, 별도 터미널에서 API를 호출합니다.
+개발용 기본 주소는 `http://127.0.0.1:8000`입니다.
+
+4. API 호출
+-----------
+상태 확인:
+
+    curl.exe http://127.0.0.1:8000/health
+
+이미지 OCR:
+
+    curl.exe -X POST -F "file=@picture1.png" http://127.0.0.1:8000/ocr
+
+`POST /ocr`는 `multipart/form-data`를 받고 파일 필드 이름은 `file`입니다.
+성공하면 HTTP 200과 다음 형식의 JSON을 반환합니다.
+
+    {
+      "success": true,
+      "filename": "picture1.png",
+      "image": {
+        "width": 1200,
+        "height": 800,
+        "processed_width": 1200,
+        "processed_height": 800
+      },
+      "count": 2,
+      "results": [
+        {
+          "text": "영양성분",
+          "confidence": 0.995,
+          "box": [[12.0, 20.0], [95.0, 20.0], [95.0, 44.0], [12.0, 44.0]]
+        },
+        {
+          "text": "단백질 20g",
+          "confidence": 0.941,
+          "box": [[15.0, 52.0], [160.0, 52.0], [160.0, 76.0], [15.0, 76.0]]
+        }
+      ],
+      "models": {
+        "text_detection": "PP-OCRv6_medium_det",
+        "text_recognition": "korean_PP-OCRv5_mobile_rec"
+      }
+    }
+
+실제 결과 항목 수와 값은 입력 이미지에 따라 달라집니다. `confidence`는 PaddleOCR
+인식 점수이고, `box`는 텍스트 영역 다각형 꼭짓점의 픽셀 좌표입니다. 작은 이미지는
+기존 CLI 전처리처럼 최대 2배 확대될 수 있으므로 box 좌표는 원본이 아니라
+전처리된 이미지 기준입니다. `image.processed_width/processed_height`를 이용해
+프런트엔드에서 원본 좌표로 비율 변환할 수 있습니다. 텍스트가 없으면 HTTP 200,
+`count: 0`, `results: []`를 반환합니다.
+
+상태 확인이 정상이면 HTTP 200입니다.
+
+    {
+      "status": "ok",
+      "model_ready": true,
+      "model_state": "ready",
+      "models": {
+        "text_detection": "PP-OCRv6_medium_det",
+        "text_recognition": "korean_PP-OCRv5_mobile_rec"
+      }
+    }
+
+오류는 다음과 같은 JSON envelope로 반환합니다. 예를 들어 이미지 데이터가
+손상되었거나 OpenCV가 해석할 수 없으면 HTTP 422입니다.
+
+    {
+      "error": {
+        "code": "invalid_image",
+        "message": "The upload could not be decoded as an image."
+      }
+    }
+
+주요 오류 상태:
+
+- HTTP 400: 업로드 읽기 실패 또는 잘못된 HTTP 요청
+- HTTP 413: 파일이 20 MiB를 넘거나 디코딩 후 4천만 픽셀을 넘음
+- HTTP 422: `file` 필드 누락, 빈 파일 또는 이미지 디코딩 실패
+- HTTP 503: PaddleOCR 모델 초기화 실패 또는 모델 준비 전 요청
+- HTTP 500: 전처리, OCR 추론 또는 결과 필드 파싱 오류
+
+내부 오류는 로그에 traceback 원인을 남기며, 클라이언트 응답에는 오류 코드와
+확인 방법만 포함합니다. 결과에 `rec_texts`, `rec_scores`, `rec_polys`가 없거나
+배열 길이가 다르면 잘못된 결과로 HTTP 500을 반환합니다. `rec_polys`가 없고
+`rec_boxes`가 제공되면 사각형을 다각형 좌표로 변환합니다.
+
+5. 이미지 입력
+--------------
+최대 업로드 크기는 20 MiB, 디코딩 후 최대 크기는 40,000,000 픽셀입니다. 파일
+확장자나 브라우저가 보낸 MIME 값만으로 허용 여부를 판단하지 않고 OpenCV가 실제
+파일 데이터를 디코딩하는지 확인합니다. JPEG, PNG, BMP, TIFF, WebP 등 설치된
+OpenCV가 디코딩할 수 있는 이미지 파일을 사용할 수 있습니다. GIF 등 다중 프레임
+입력은 프레임 단위로 처리하지 않으며 PDF는 지원하지 않습니다.
+
+전처리는 기존 CLI 알고리즘을 유지합니다. 작은 이미지는 최대 2배(긴 변이 960px가
+되도록) 확대하고, BGR 그레이스케일 변환, CLAHE(clipLimit 2.0, tileGridSize 8x8),
+BGR 변환을 적용합니다. 영양성분 문맥에 한해 `ng`를 `mg`로, 탄수화물·당류·식이섬유·
+단백질·지방 항목에서 숫자 뒤 `9`를 `g`로 보정합니다. 항목명과 값이 서로 다른 OCR
+행으로 나뉘면 CLI와 동일하게 값 단독 보정은 하지 않습니다.
+
+6. 프런트엔드 연결과 CORS
+-------------------------
+기본 개발 주소는 `http://127.0.0.1:8000`이며, OCR URL은
+`POST http://127.0.0.1:8000/ocr`, 파일 필드 이름은 `file`입니다. 프런트엔드는
+요청 body를 `multipart/form-data`로 만들고 브라우저가 boundary를 설정하도록
+`Content-Type` 헤더를 직접 지정하지 않는 방식을 권장합니다.
+
+CORS는 기본적으로 비활성화되어 있습니다. 프런트엔드가 다른 origin에서 실행되면
+실행 전에 정확한 origin을 쉼표로 구분해 설정합니다.
+
+    $env:WEB_OCR_CORS_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000"
+    python .\web_ocr_backend.py
+
+Origin에는 경로를 포함하지 않습니다(예: `http://localhost:3000`). 와일드카드 `*`는
+허용하지 않습니다. 배포 환경에서는 실제 프런트엔드 origin만 지정하세요.
+
+7. 오류 확인 및 제한
+-------------------
+모델 초기화가 실패하면 서버 로그의 `PaddleOCR initialization failed` traceback을
+확인하고 `GET /health`가 HTTP 503 및 `model_ready: false`를 반환하는지 확인합니다.
+파일 업로드·디코딩은 `/ocr` 오류 코드 `upload_read_failed`, `empty_upload`,
+`invalid_image`, `upload_too_large`를 확인합니다. 전처리·추론·응답 파싱은 서버
+로그의 각 단계 오류와 `/ocr`의 `image_processing_failed`, `ocr_inference_failed`,
+`ocr_result_invalid` 코드를 확인합니다.
+
+이 실행 환경에는 FastAPI, PaddleOCR, PaddlePaddle, OpenCV가 설치되어 있지 않아
+백엔드의 실제 모델 초기화, `picture1.png`~`picture4.jpg` OCR 호출, HTTP 응답을
+확인하지 못했습니다. 코드 구문 검사는 별도로 수행했으며, OCR 정확도 향상은
+주장하지 않습니다. GPU 설치, 다른 운영체제, 다른 Python 버전, 배포 환경 CORS 및
+동시 요청 부하는 검증하지 않았습니다.
+
+8. 참고한 공식 문서
+------------------
+- PaddleOCR 3.7.0 OCR 파이프라인 API, 모델, `predict()` 입력 및 결과 필드:
+  https://github.com/PaddlePaddle/PaddleOCR/blob/v3.7.0/docs/version3.x/pipeline_usage/OCR.en.md
+- PaddleOCR 3.7.0 `PaddleOCR` 파이프라인 생성자:
+  https://github.com/PaddlePaddle/PaddleOCR/blob/v3.7.0/paddleocr/_pipelines/ocr.py
+- PaddleX 3.7 공식 모델 식별자:
+  https://github.com/PaddlePaddle/PaddleX/blob/release/3.7/paddlex/inference/utils/official_models.py
+- PaddlePaddle 3.2.0 CPython 3.12 / Windows x64 wheel 목록:
+  https://pypi.org/project/paddlepaddle/3.2.0/
+- FastAPI 0.142.1:
+  https://pypi.org/project/fastapi/0.142.1/
+- Uvicorn 0.54.0:
+  https://pypi.org/project/uvicorn/0.54.0/
+- python-multipart 0.0.32:
+  https://pypi.org/project/python-multipart/0.0.32/
+- OpenCV 이미지 디코딩 지원 형식:
+  https://docs.opencv.org/4.12.0/d4/da8/group__imgcodecs.html

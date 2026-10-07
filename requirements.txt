@@ -1,0 +1,4 @@
+--extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cpu/
+paddlepaddle==3.2.0
+paddleocr==3.7.0
+paddlex[ocr-core]==3.7.0
