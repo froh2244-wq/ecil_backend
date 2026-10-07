@@ -13,7 +13,7 @@
 ```bash
 pip install -r requirements.txt
 python scripts/cli_ocr.py
-
+```
 ### 2. 웹 서버 프로그램
 ```bash 
 pip install -4 requirements-web.txt
